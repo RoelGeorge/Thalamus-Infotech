@@ -1,0 +1,202 @@
+#install.packages("shiny")
+#install.packages("shinydashboard")
+#install.packages("shinythemes")
+#install.packages("ggplot2")
+#install.packages("dplyr")
+#install.packages("cowplot")
+#install.packages("scales")
+#install.packages("readr")
+#install.packages( "lavaan")
+#install.packages("smooth", "Hmisc")
+#install.packages("plyr")
+
+#plotly 
+
+library("cowplot")
+library("dplyr")
+library("shiny")
+library("shinydashboard")
+library("shinythemes")
+library("ggplot2")
+library("scales")
+library("plyr")
+library("smooth","Hmisc")
+library("readr")
+library("patchwork")
+
+source("R_rainclouds.R")
+source("summarySE.R")
+source("simulateData.R")
+
+
+
+ui <- fluidPage(
+  theme=shinytheme("darkly"),
+  titlePanel("Thalamus Infotech"),
+  sidebarLayout(
+      sidebarPanel(
+        width=3,
+        fileInput(
+          inputId = "file",
+          label = "Upload File",
+          accept = c("text/csv",
+                     "text/comma-separated-values,text/plain",
+                     ".csv")
+        ),
+        selectInput(
+          inputId = "dp_var",
+          label = "Depended Variable (y): ",
+          "Names"
+        ),
+        selectInput(
+          inputId = "indp_var",
+          label = "Independed Variable (x): ",
+          "Names"
+        )
+    ),
+    mainPanel(
+      wellPanel( fluidRow(
+       column(width=6,plotOutput("plot1")),
+       column(width=6,plotOutput("plot2")),
+      )),
+      wellPanel(fluidRow(
+        column(width=6, plotOutput("plot3")),
+        (column(width=6, tableOutput("table2"))
+      )
+    ))
+  )
+))
+
+server <- function(input, output, session) {
+  
+  observe({
+    updateSelectInput(
+      session,
+      inputId = "dp_var",
+      choices = colnames(data1()),
+      selected = colnames(data1())[9]
+    )
+  })
+  observe({
+    updateSelectInput(
+      session,
+      inputId = "indp_var",
+      choices = colnames(data1()), 
+      selected = colnames(data1())[1]
+
+    )
+  })
+  
+  data1<- reactive({
+    req(input$file)
+    df<-read.csv(input$file$datapath)
+    df<-na.omit(df)
+    df
+  })
+  
+  clean<-reactive({
+    (data1()[ ,c(input$indp_var,input$dp_var)])
+    })
+  new<-reactive({
+    
+    appPlot2<-ggplot()+
+      geom_histogram(data=clean(), aes(x=clean()[,1],fill=as.factor(clean()[,2])),
+      color="black",
+      binwidth = 20
+    )
+    appplot3<-ggplot_build(appPlot2)
+    new<-appplot3$data[[1]]
+    new
+  })
+ 
+  total<-reactive({
+    sum(new()$count)
+  })
+  ppn_perc<-reactive({
+    ((new()[new()$group==2,]$count+new()[new()$group==1,]$count)*100/total())
+  })
+  bdl_perc<-reactive({
+    (new()[new()$group==2,]$count*100/(new()[new()$group==1,]$count+new()[new()$group==2,]$count))
+  })
+  good_dist<-reactive({
+    new()[new()$group==1,]$count/sum(new()[new()$group==1,]$count)
+  })
+  bad_dist<-reactive({
+    new()[new()$group==2,]$count/sum(new()[new()$group==2,]$count)
+  })
+  WOE<-reactive({
+    log(good_dist()/bad_dist())
+  })
+  table_fin<-reactive({
+    cbind(new()[1:length(WOE()),c("xmin","xmax")],bad_dist(),good_dist(),WOE())
+  })
+  new1<-reactive({
+    cbind(new()[,c("count","x","group")],ppn_perc(),bdl_perc())
+  })
+  
+  output$table2<-renderTable( caption="Calculation of WOE",
+                              caption.placement="top",
+  
+  {
+    return(table_fin())
+  })
+  output$plot2<- renderPlot({
+    ggplot(data=clean(), aes(clean()[,1],fill=as.factor(clean()[,2])))+
+      geom_histogram(
+        color="black",
+        binwidth = 10
+      )+
+      labs(
+        title = paste("Histogram of ",input$indp_var," data"),
+        x=input$indp_var
+      )
+  
+  })
+  
+  output$plot1<- renderPlot({
+    ggplot(data=clean(), aes(x=clean()[,2],fill=as.factor(clean()[,2])))+
+      geom_flat_violin(
+        aes(y=clean()[,1]),
+        position = position_nudge(x=0.1,y=0),adjust=1)+
+      geom_point(aes(y=clean()[,1]),
+                 position = position_jitter(width=0.1),size=0.1,alpha=0.1)+
+      geom_boxplot(aes(x=as.numeric(clean()[,2])+0.1,y=clean()[,1])
+                   ,width=0.1,outlier.shape = NA,alpha=0.5)+
+      coord_flip()+
+      labs(
+        title = paste("Raincloud Plot for the ",input$indp_var," data"),
+        x= input$dp_var,
+        y=input$indp_var
+      )
+  })
+  output$plot3<-renderPlot({
+    ggplot()+
+      geom_bar(data = new1(),aes(x=new1()[,2],y=new1()[,4]),
+               stat="identity",
+               position="identity",
+               col="black",
+               fill="darkseagreen3")+
+      geom_line(
+        data=new1(),aes(x=new1()[,2],y=new1()[,5]),
+        na.rm=T,
+        linetype=4,size=1.05,col="seagreen")+
+      geom_point(data=new1(),aes(x=new1()[,2],y=new1()[,5]),
+                 na.rm=T
+                 ,col="seagreen",
+                 size=2,shape=15)+
+      scale_y_continuous(
+        name=colnames(new1())[4],
+        sec.axis = sec_axis(trans = ~.*1,name=colnames(new1())[5])
+      )+
+      labs(
+        title = "Dual y axis plot",
+        x="bins"
+      )
+      
+  })
+  
+  
+  
+}
+
+shinyApp(ui, server)
